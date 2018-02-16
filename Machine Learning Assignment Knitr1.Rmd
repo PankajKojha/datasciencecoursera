@@ -1,0 +1,209 @@
+---
+title: "Practical Machine Learning Assignment"
+author: "Pankaj Ojha"
+date: "February 8, 2018"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## BACKGROUND
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+## Data Files
+
+The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from this source: http://groupware.les.inf.puc-rio.br/har. 
+
+If you use the document you create for this class for any purpose please cite them as they have been very generous in allowing their data to be used for this kind of assignment.
+
+## Purpose
+
+The goal of this project is to predict the manner in which participant did the exercise. The "classe" variable in the training set defined the manner by which participant perform the exercise. The various variables can be used predict "classe". The report describe how the models are built, how the cross validation is done, what is the expected sample error, and why the particular model is used. The prediction model will be used to predict 20 different test cases.
+
+```{r tag1_Libarary, message=F, warning=F}
+library(e1071)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+library(caret)
+library(kernlab) 
+library(rattle)
+library(gbm)
+library(forecast)
+library(rpart.plot)
+library(randomForest)
+library(corrplot)
+```
+
+## Getting the data
+
+Fetching the data directly from website is time consuming, thus I have downloaded the data locally in my hard disk to perform the various model. Also, I have given the approach to directly access the data from site.
+
+```{r tag2_Getting_data, echo=TRUE}
+traindat = read.csv("./pml-training.csv")
+testdat = read.csv("./pml-testing.csv")
+
+# UrlTrain <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+# UrlTest  <- "http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+# 
+# # download the datasets
+# traindat <- read.csv(url(UrlTrain))
+# testdat  <- read.csv(url(UrlTest))
+```
+
+Set the seed for Reproducibility
+```{r tag9_seed, echo=TRUE}
+set.seed(12345)
+```
+
+##
+Create a partition with the training dataset into TrainSet and TestSet
+
+```{r , tag3_Partition, echo=TRUE}
+# create a partition with the training dataset 
+inTrain  <- createDataPartition(traindat$classe, p=0.7, list=FALSE)
+TrainSet <- traindat[inTrain, ]
+TestSet  <- traindat[-inTrain, ]
+
+dim(TrainSet); dim(TestSet)
+```
+## Cleansing of Data
+
+First, find the near Zero variables columns
+```{r tag4_NZV, echo=TRUE}
+# Find the near Zero variaoble columns
+NZV <- nearZeroVar(TrainSet,saveMetrics=TRUE)
+TrainSet <- TrainSet[ ,NZV$nzv==FALSE]
+TestSet  <- TestSet[ ,NZV$nzv==FALSE]
+dim(TrainSet); dim(TestSet)
+
+```
+Remove the variables that are mostly NA
+
+```{r tag5_NA, echo=TRUE}
+VarNA    <- sapply(TrainSet, function(x) mean(is.na(x))) > 0.95
+TrainSet <- TrainSet[, VarNA==FALSE]
+TestSet  <-  TestSet[, VarNA==FALSE]
+dim(TrainSet); dim(TestSet)
+```
+Remove identification only variables (columns 1 to 5)
+
+```{r tag6_Identification_Columns, echo=TRUE}
+TrainSet <- TrainSet[, -(1:5)]
+TestSet  <- TestSet[, -(1:5)]
+dim(TrainSet); dim(TestSet)
+```
+
+## Corelation Analysis
+
+Find the corelated variables
+```{r tag7_Corelation, echo=TRUE, results="hide"}
+CorM <- abs(cor(TrainSet[,-54]))
+diag(CorM) <- 0
+which(CorM > 0.8,arr.ind=T)
+
+```
+```{r tag8_Corelation_plot, echo=TRUE}
+corrplot(CorM, order = "FPC", method = "color", type = "lower", 
+         tl.cex = 0.8, tl.col = rgb(0, 0, 0))
+```
+
+
+## 1. Random Forest
+Build the first model with Random forest
+```{r tag10_RandomForest, echo=TRUE}
+modelFitRF <- train( classe ~.,method="rf",
+               data=TrainSet, 
+               trControl = trainControl(method="cv"),number=3)
+ 
+ 
+modelFitRF$finalModel
+predictRF <- predict(modelFitRF, newdata = TestSet)
+confMatRF <- confusionMatrix(predictRF,TestSet$classe)
+
+```
+## 2. Decision Tree
+Build the second model with Decision Tree
+```{r tag11_DecisionTree, echo=TRUE}
+modelFitRPART <- train(classe ~ .,method="rpart",data=TrainSet)
+modelFitRPART$finalModel
+predictRPART <- predict(modelFitRPART, newdata = TestSet)
+confMatRPART <- confusionMatrix(predictRPART,TestSet$classe)
+
+```
+Plot the Decision Tree
+```{r tag12_DT, echo=TRUE}
+fancyRpartPlot(modelFitRPART$finalModel)
+
+```
+## 3. Generalized Boosted Model
+```{r tag13_gbm, echo=TRUE, results="hide"}
+modelFitGBM <- train(classe ~.,data=TrainSet, method="gbm")
+modelFitGBM$finalModel
+predictGBM <- predict(modelFitGBM, newdata = TestSet)
+confMatGBM <- confusionMatrix(predictGBM,TestSet$classe)
+
+```
+## 4. Combined Model
+```{r tag14_combined_model, echo=TRUE}
+predComDF <- data.frame(predictRF,predictRPART,predictGBM,classeC = TestSet$classe )
+combineFitRF <- train(classeC ~., data=predComDF, method = "rf")
+combinePredRF <- predict(combineFitRF,predComDF)
+confMatCOM <- confusionMatrix(combinePredRF,TestSet$classe)
+
+```
+Accuracy of various Algorithim 
+```{r tag15_Accuracy, echo=TRUE}
+#Random Forest
+confusionMatrix(predictRF,TestSet$classe)$overall[1]
+#Decision Tree
+confusionMatrix(predictRPART,TestSet$classe)$overall[1]
+#Generalized Boosted Model
+confusionMatrix(predictGBM,TestSet$classe)$overall[1]
+#Combined Model
+confusionMatrix(combinePredRF,TestSet$classe)$overall[1]
+
+```
+Accracy of the Randum forest is highest. Thus we will use the Random Forest for test data prediction
+
+The expected out-of-sample error is
+```{r tag16_SampleError, echo=TRUE}
+
+SampleError <- 1 - confusionMatrix(predictRF,TestSet$classe)$overall[1]
+SampleError
+
+```
+
+Prepare the test data by removing Near zero Value, NA and identification variables
+```{r Tag16_clean_test, echo=TRUE}
+NZV <- nearZeroVar(testdat,saveMetrics=TRUE)
+testdat <- testdat[ ,NZV$nzv==FALSE]
+dim(testdat);
+
+# remove variables that are mostly NA
+VarNA    <- sapply(testdat, function(x) mean(is.na(x))) > 0.95
+testdat <- testdat[, VarNA==FALSE]
+dim(testdat)
+
+# remove identification only variables (columns 1 to 5)
+testdat <- testdat[, -(1:5)]
+dim(testdat)
+```
+
+Predict the out come of test data set.
+
+```{r tag17_predict, echo=TRUE}
+testPred <- predict(modelFitRF,newdata=testdat)
+testPred
+```
+
+
